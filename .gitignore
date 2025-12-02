@@ -1,0 +1,5 @@
+.env
+.claude
+.venv
+custom_cli.egg-info
+__pycache__

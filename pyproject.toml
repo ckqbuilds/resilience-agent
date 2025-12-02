@@ -1,0 +1,21 @@
+[project]
+name = "custom-cli"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "strands-agents>=1.18.0",
+    "strands-agents-tools>=0.2.16",
+    "strands-agents[anthropic]>=1.9.1",
+    "textual>=6.6.0",
+    "textual-dev>=1.8.0",
+    "pydantic>=2.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["aws_knowledge_agent*", "discovery_agent*", "resilience_agent*"]
