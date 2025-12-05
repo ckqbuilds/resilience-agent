@@ -1,0 +1,10 @@
+strands-agents>=1.18.0
+strands-agents-tools>=0.2.16
+strands-agents[anthropic]>=1.9.1
+textual>=6.6.0
+textual-dev>=1.8.0
+pydantic>=2.0.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-dotenv>=1.0.0
+boto3>=1.35.0

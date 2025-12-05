@@ -10,6 +10,7 @@ from strands.tools.mcp import MCPClient
 from mcp.client.sse import sse_client
 from mcp import stdio_client, StdioServerParameters
 from strands.models.anthropic import AnthropicModel
+from strands.handlers.callback_handler import PrintingCallbackHandler
 from strands.tools import tool
 from dotenv import load_dotenv
 import os
@@ -31,6 +32,16 @@ aws_documentation_mcp = MCPClient(lambda: stdio_client(
 StdioServerParameters(
     command="uvx",
     args=["awslabs.aws-documentation-mcp-server@latest"]
+)
+))
+
+aws_knowledge_mcp = MCPClient(lambda: stdio_client(
+StdioServerParameters(
+    command="uvx",
+    args=["https://knowledge-mcp.global.api.aws"],
+    env={
+        "type": "http"
+    }
 )
 ))
 
@@ -86,7 +97,7 @@ def aws_knowledge_agent(query: str):
             model=claude,
             tools=[aws_documentation_mcp, bedrock_kb_mcp],
             load_tools_from_directory=False,
-            callback_handler=None,
+            callback_handler=PrintingCallbackHandler(),
         )
 
         response = knowledge_agent(query)
