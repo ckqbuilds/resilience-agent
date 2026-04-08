@@ -6,7 +6,9 @@ import boto3
 from dotenv import load_dotenv
 import os
 
-from resilience_agent.agent import resilience_agent, mode_state
+from resilience_agent.agent import resilience_agent, mode_state, event_handler, model_state
+from resilience_agent.model_factory import ModelFactory
+from resilience_agent.model_config import MODEL_CONFIGS
 
 load_dotenv()
 
@@ -25,8 +27,13 @@ app.add_middleware(
 sessions: Dict[str, Any] = {}
 
 # Initialize AWS clients for info endpoint
-sts = boto3.client('sts')
-session = boto3.Session()
+# Use a mutable dict to store the current session so we can update it
+aws_session_state = {
+    "session": boto3.Session(),
+    "sts": None
+}
+# Initialize STS client from the session
+aws_session_state["sts"] = aws_session_state["session"].client('sts')
 
 
 class ChatRequest(BaseModel):
@@ -40,8 +47,19 @@ class InterruptResponse(BaseModel):
     sessionId: str
 
 
+class ProfileSwitchRequest(BaseModel):
+    profile: str
+
+
+class ModelSwitchRequest(BaseModel):
+    provider: str
+    model_id: str
+    config: Optional[Dict[str, Any]] = None
+
+
 class ChatResponse(BaseModel):
     content: str
+    events: Optional[List[Dict[str, Any]]] = None
     interrupt: Optional[Dict[str, Any]] = None
 
 
@@ -81,8 +99,14 @@ async def chat(request: ChatRequest):
         # Store user message in history
         session_data["conversation_history"].append(request.message)
 
+        # Clear previous events before new agent call
+        event_handler.clear()
+
         # Call the agent
         response = resilience_agent(request.message)
+
+        # Get captured events
+        events = event_handler.get_events()
 
         # Check if there's an interrupt (mode transition request)
         if hasattr(response, 'stop_reason') and hasattr(response, 'interrupts') and response.interrupts:
@@ -101,6 +125,7 @@ async def chat(request: ChatRequest):
                 # Return interrupt info to frontend
                 return ChatResponse(
                     content="",
+                    events=events if events else None,
                     interrupt={
                         "id": interrupt.id,
                         "currentMode": reason_data["current_mode"],
@@ -115,7 +140,10 @@ async def chat(request: ChatRequest):
         # Extract text from normal response
         content = extract_text_from_response(response)
 
-        return ChatResponse(content=content)
+        return ChatResponse(
+            content=content,
+            events=events if events else None
+        )
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -150,6 +178,9 @@ async def respond_to_interrupt(request: InterruptResponse):
             )
 
         try:
+            # Clear previous events before resuming agent
+            event_handler.clear()
+
             # Create interrupt response in the format the agent expects
             interrupt_response = {
                 "interruptResponse": {
@@ -161,6 +192,9 @@ async def respond_to_interrupt(request: InterruptResponse):
             # Resume agent with the interrupt response
             # The agent expects a list of responses when resuming from interrupt
             result = resilience_agent([interrupt_response])
+
+            # Get captured events
+            events = event_handler.get_events()
 
             # Clear pending interrupt after successful resumption
             session_data["pending_interrupt"] = None
@@ -179,6 +213,7 @@ async def respond_to_interrupt(request: InterruptResponse):
 
                     return ChatResponse(
                         content="",
+                        events=events if events else None,
                         interrupt={
                             "id": interrupt.id,
                             "currentMode": reason_data["current_mode"],
@@ -193,7 +228,10 @@ async def respond_to_interrupt(request: InterruptResponse):
             # Extract text from response
             content = extract_text_from_response(result)
 
-            return ChatResponse(content=content)
+            return ChatResponse(
+                content=content,
+                events=events if events else None
+            )
 
         except Exception as agent_error:
             # Don't clear the interrupt if the agent failed
@@ -214,6 +252,9 @@ async def get_info():
     Get LLM, AWS, and session information.
     """
     try:
+        session = aws_session_state["session"]
+        sts = aws_session_state["sts"]
+
         # Get AWS info
         aws_config = {
             "region": session.region_name,
@@ -224,7 +265,8 @@ async def get_info():
         # Get model config
         model_config_dict = resilience_agent.model.get_config()
         model_config = {
-            "modelId": model_config_dict.get('model_id', 'claude-sonnet-4-5'),
+            "provider": model_state["provider"],
+            "modelId": model_config_dict.get('model_id', model_state["model_id"]),
             "maxTokens": model_config_dict.get('max_tokens', 64000),
             "temperature": model_config_dict.get('params', {}).get('temperature', 0.2),
             "tools": resilience_agent.tool_names
@@ -246,6 +288,185 @@ async def get_info():
             "stats": session_stats
         }
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/profiles")
+async def list_profiles():
+    """
+    List all available AWS profiles from ~/.aws/credentials and ~/.aws/config.
+    """
+    try:
+        session = boto3.Session()
+        available_profiles = session.available_profiles
+        current_profile = aws_session_state["session"].profile_name or "default"
+
+        return {
+            "profiles": available_profiles,
+            "current": current_profile
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/profiles/switch")
+async def switch_profile(request: ProfileSwitchRequest):
+    """
+    Switch to a different AWS profile.
+    """
+    try:
+        # Validate the profile exists
+        available_profiles = boto3.Session().available_profiles
+        if request.profile not in available_profiles:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Profile '{request.profile}' not found. Available profiles: {', '.join(available_profiles)}"
+            )
+
+        # Create new session with the requested profile
+        new_session = boto3.Session(profile_name=request.profile)
+        new_sts = new_session.client('sts')
+
+        # Verify the profile works by making a test call
+        try:
+            account_id = new_sts.get_caller_identity().get('Account')
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to authenticate with profile '{request.profile}': {str(e)}"
+            )
+
+        # Update the global session state
+        aws_session_state["session"] = new_session
+        aws_session_state["sts"] = new_sts
+
+        return {
+            "success": True,
+            "profile": request.profile,
+            "region": new_session.region_name,
+            "accountId": account_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/models/providers")
+async def list_providers():
+    """
+    List all available LLM providers and their models.
+    """
+    try:
+        return {
+            "providers": MODEL_CONFIGS,
+            "current": {
+                "provider": model_state["provider"],
+                "model_id": model_state["model_id"]
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/models/switch")
+async def switch_model(request: ModelSwitchRequest):
+    """
+    Switch to a different model provider or model.
+    """
+    try:
+        # Validate provider exists
+        if request.provider not in MODEL_CONFIGS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Provider '{request.provider}' not found. Available providers: {', '.join(MODEL_CONFIGS.keys())}"
+            )
+
+        # Validate model_id exists for provider
+        provider_config = MODEL_CONFIGS[request.provider]
+        valid_model_ids = [m["id"] for m in provider_config["models"]]
+        if request.model_id not in valid_model_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model '{request.model_id}' not found for provider '{request.provider}'. Available models: {', '.join(valid_model_ids)}"
+            )
+
+        # Build configuration based on provider
+        config = request.config or {}
+
+        # Set model_id and default values
+        config["model_id"] = request.model_id
+        config.setdefault("temperature", 0.2)
+
+        # Get max_tokens from model definition
+        model_info = next((m for m in provider_config["models"] if m["id"] == request.model_id), None)
+        if model_info:
+            config.setdefault("max_tokens", model_info["max_tokens"])
+
+        # Provider-specific configuration
+        if request.provider == "anthropic":
+            api_key = config.get("api_key") or os.getenv("ANTHROPIC_API_KEY")
+            if not api_key:
+                raise HTTPException(
+                    status_code=400,
+                    detail="ANTHROPIC_API_KEY not found in environment or config"
+                )
+            config["api_key"] = api_key
+
+        elif request.provider == "bedrock":
+            # Use current AWS session for Bedrock
+            config["boto_session"] = aws_session_state["session"]
+            config["region_name"] = aws_session_state["session"].region_name
+
+        elif request.provider == "gemini":
+            api_key = config.get("api_key") or os.getenv("GOOGLE_API_KEY")
+            if not api_key:
+                raise HTTPException(
+                    status_code=400,
+                    detail="GOOGLE_API_KEY not found in environment or config"
+                )
+            config["api_key"] = api_key
+
+        elif request.provider == "openai":
+            api_key = config.get("api_key") or os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise HTTPException(
+                    status_code=400,
+                    detail="OPENAI_API_KEY not found in environment or config"
+                )
+            config["api_key"] = api_key
+
+        # Create new model instance
+        try:
+            new_model = ModelFactory.create_model(request.provider, config)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create model: {str(e)}"
+            )
+
+        # Update the agent's model
+        resilience_agent.model = new_model
+
+        # Update model state
+        model_state["provider"] = request.provider
+        model_state["model_id"] = request.model_id
+        model_state["config"] = config
+
+        # Return updated model info
+        model_config_dict = resilience_agent.model.get_config()
+        return {
+            "success": True,
+            "provider": request.provider,
+            "model_id": request.model_id,
+            "modelId": model_config_dict.get('model_id', request.model_id),
+            "maxTokens": model_config_dict.get('max_tokens', config.get("max_tokens")),
+            "temperature": model_config_dict.get('params', {}).get('temperature', config.get("temperature")),
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -272,4 +493,4 @@ def extract_text_from_response(response) -> str:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)

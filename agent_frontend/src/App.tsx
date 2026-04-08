@@ -21,6 +21,16 @@ const AVAILABLE_COMMANDS = [
   { name: 'exit', description: 'Exit the application' },
 ];
 
+const MAX_MESSAGES = 100;
+
+// Helper function to limit message history
+const limitMessages = (messages: Message[]) => {
+  if (messages.length > MAX_MESSAGES) {
+    return messages.slice(-MAX_MESSAGES);
+  }
+  return messages;
+};
+
 export function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -34,6 +44,7 @@ export function App() {
   const [showModeDialog, setShowModeDialog] = useState(false);
   const [pendingModeTransition, setPendingModeTransition] = useState<any>(null);
   const [showBanner, setShowBanner] = useState(true);
+  const [inputKey, setInputKey] = useState(0);
 
   const { exit } = useApp();
   // Use useMemo to create AgentService only once and keep the same session ID
@@ -46,6 +57,13 @@ export function App() {
     }
   }, [messages]);
 
+  // Force TextInput remount after dialogs close to restore focus
+  useEffect(() => {
+    if (!showModeDialog && !isLoading && !showInfo) {
+      setInputKey((prev) => prev + 1);
+    }
+  }, [showModeDialog, isLoading, showInfo]);
+
   // Handle slash commands
   const handleSlashCommand = async (command: string) => {
     const parts = command.slice(1).split(' ');
@@ -53,7 +71,7 @@ export function App() {
 
     switch (cmd) {
       case 'help':
-        setMessages((prev) => [
+        setMessages((prev) => limitMessages([
           ...prev,
           {
             role: 'system',
@@ -66,7 +84,7 @@ export function App() {
               '/mode - Show current operation mode',
             timestamp: new Date(),
           },
-        ]);
+        ]));
         break;
 
       case 'info':
@@ -89,25 +107,25 @@ export function App() {
         break;
 
       case 'mode':
-        setMessages((prev) => [
+        setMessages((prev) => limitMessages([
           ...prev,
           {
             role: 'system',
             content: `Current Mode: ${modeState.current} - ${modeState.description}`,
             timestamp: new Date(),
           },
-        ]);
+        ]));
         break;
 
       default:
-        setMessages((prev) => [
+        setMessages((prev) => limitMessages([
           ...prev,
           {
             role: 'system',
             content: `Unknown command: /${cmd}. Type /help for available commands.`,
             timestamp: new Date(),
           },
-        ]);
+        ]));
     }
   };
 
@@ -127,7 +145,7 @@ export function App() {
       content: value,
       timestamp: new Date(),
     };
-    setMessages((prev) => [...prev, userMessage]);
+    setMessages((prev) => limitMessages([...prev, userMessage]));
     setInput('');
     setIsLoading(true);
 
@@ -148,15 +166,16 @@ export function App() {
         role: 'assistant',
         content: response.content,
         timestamp: new Date(),
+        events: response.events,
       };
-      setMessages((prev) => [...prev, assistantMessage]);
+      setMessages((prev) => limitMessages([...prev, assistantMessage]));
     } catch (error) {
       const errorMessage: Message = {
         role: 'system',
         content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
         timestamp: new Date(),
       };
-      setMessages((prev) => [...prev, errorMessage]);
+      setMessages((prev) => limitMessages([...prev, errorMessage]));
     } finally {
       setIsLoading(false);
     }
@@ -173,14 +192,14 @@ export function App() {
         description: pendingModeTransition.description || '',
       });
 
-      setMessages((prev) => [
+      setMessages((prev) => limitMessages([
         ...prev,
         {
           role: 'system',
           content: `Mode transition to ${pendingModeTransition.requiredMode} approved.`,
           timestamp: new Date(),
         },
-      ]);
+      ]));
 
       // Resume agent with approval
       try {
@@ -193,25 +212,26 @@ export function App() {
           role: 'assistant',
           content: response.content,
           timestamp: new Date(),
+          events: response.events,
         };
-        setMessages((prev) => [...prev, assistantMessage]);
+        setMessages((prev) => limitMessages([...prev, assistantMessage]));
       } catch (error) {
         const errorMessage: Message = {
           role: 'system',
           content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
           timestamp: new Date(),
         };
-        setMessages((prev) => [...prev, errorMessage]);
+        setMessages((prev) => limitMessages([...prev, errorMessage]));
       }
     } else {
-      setMessages((prev) => [
+      setMessages((prev) => limitMessages([
         ...prev,
         {
           role: 'system',
           content: `Mode transition to ${pendingModeTransition?.requiredMode} rejected.`,
           timestamp: new Date(),
         },
-      ]);
+      ]));
     }
 
     setPendingModeTransition(null);
@@ -248,7 +268,7 @@ export function App() {
 
   return (
     <Box flexDirection="column" height="100%">
-      <Header mode={modeState} />
+      <Header />
 
       <Box flexGrow={1} flexDirection="column" paddingX={1}>
         {showBanner && <Banner />}
@@ -277,6 +297,7 @@ export function App() {
             </Box>
           ) : (
             <TextInput
+              key={inputKey}
               value={input}
               onChange={setInput}
               onSubmit={handleSubmit}
@@ -286,7 +307,7 @@ export function App() {
         </Box>
       </Box>
 
-      <Footer />
+      <Footer mode={modeState} />
     </Box>
   );
 }

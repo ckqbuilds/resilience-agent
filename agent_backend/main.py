@@ -83,7 +83,7 @@ class ModeTransitionDialog(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static("⚠️  MODE TRANSITION REQUIRED ⚠️", classes="dialog-title")
+            yield Static("⚠️ MODE TRANSITION REQUIRED ⚠️", classes="dialog-title")
             yield Static(
                 f"\nThe agent wants to use tool: [bold]{self.tool_name}[/bold]\n\n"
                 f"Current Mode: [green]{self.current_mode}[/green]\n"

@@ -100,15 +100,6 @@ Once the TUI is running:
 - Install: `curl -fsSL https://bun.sh/install | bash`
 - Or use npm: `cd agent_frontend && npm install && npm start`
 
-## What's Different from the Old TUI?
-
-| Action | Old (Textual) | New (Ink) |
-|--------|---------------|-----------|
-| Show info | Press `i` | Type `/info` |
-| Clear chat | Press `Ctrl+L` | Type `/clear` |
-| Quit | Press `q` | Type `/quit` |
-| Help | N/A | Type `/help` |
-
 ## Next Steps
 
 - Read the full [README.md](README.md) for detailed documentation

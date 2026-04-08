@@ -5,11 +5,12 @@ description = "Resilience Architect - Backend API for chaos engineering agent"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "strands-agents>=1.18.0",
-    "strands-agents-tools>=0.2.16",
-    "strands-agents[anthropic]>=1.9.1",
-    "textual>=6.6.0",
-    "textual-dev>=1.8.0",
+    "strands-agents>=1.35.0",
+    "strands-agents-tools>=0.4.0",
+    "strands-agents[anthropic]>=1.35.0",
+    "strands-agents[bedrock]>=1.35.0",
+    "strands-agents[gemini]>=1.35.0",
+    "strands-agents[openai]>=1.35.0",
     "pydantic>=2.0.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",

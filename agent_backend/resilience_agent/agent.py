@@ -1,6 +1,4 @@
 from strands import Agent
-from strands.models.anthropic import AnthropicModel
-from strands.handlers.callback_handler import PrintingCallbackHandler
 from strands_tools import use_aws, think, current_time
 from dotenv import load_dotenv
 from pprint import pprint
@@ -11,6 +9,9 @@ from pathlib import Path
 # Import operation modes
 from resilience_agent.tools.operation_modes import ModeState, OperationModeHook
 
+# Import event capturing handler
+from resilience_agent.handlers import EventCapturingHandler
+
 # Import planning tools
 from resilience_agent.tools.planning_tools import (
     save_experiment_plan,
@@ -20,6 +21,10 @@ from resilience_agent.tools.planning_tools import (
     get_plan_summary,
     export_plan_to_fis_template
 )
+
+# Import model factory and configuration
+from resilience_agent.model_factory import ModelFactory
+from resilience_agent.model_config import MODEL_CONFIGS
 
 # Add parent directory to path for direct execution
 if __name__ == "__main__":
@@ -36,15 +41,26 @@ mode_state = ModeState()
 # Create operation mode hook (read_only can be set via CLI arg)
 operation_mode_hook = OperationModeHook(mode_state, read_only=False)
 
-claude = AnthropicModel(
-    client_args={
-        'api_key': os.getenv("ANTHROPIC_API_KEY")
-    },
-    model_id='claude-sonnet-4-5',
-    max_tokens=64000,
-    params={
+# Create global event handler instance for capturing tool calls
+event_handler = EventCapturingHandler()
+
+# Model state - mutable for runtime switching
+# Similar to aws_session_state pattern
+model_state = {
+    "provider": "anthropic",
+    "model_id": "claude-sonnet-4-6",
+    "config": {
+        "api_key": os.getenv("ANTHROPIC_API_KEY"),
+        "model_id": "claude-sonnet-4-6",
+        "max_tokens": 64000,
         "temperature": 0.2
     }
+}
+
+# Create model using factory
+claude = ModelFactory.create_model(
+    model_state["provider"],
+    model_state["config"]
 )
 
 def debugger_callback_handler(**kwargs):
@@ -54,8 +70,7 @@ def debugger_callback_handler(**kwargs):
 resilience_agent = Agent(
    name="Resilience Architect",
    description="Orchestrates AWS FIS chaos engineering experiments and manages the resilience testing lifecycle.",
-   system_prompt="""<?xml version="1.0" encoding="UTF-8"?>
-                    <system_prompt>
+   system_prompt="""<system_prompt>
                     <agent>
                         <name>Resilience Architect Agent</name>
                         <expertise>
@@ -177,7 +192,7 @@ resilience_agent = Agent(
        get_plan_summary,
        export_plan_to_fis_template
    ],
-   callback_handler=PrintingCallbackHandler(),
+   callback_handler=event_handler,
    hooks=[operation_mode_hook],
 )
 
