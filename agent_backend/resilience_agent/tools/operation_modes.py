@@ -11,7 +11,7 @@ from datetime import datetime
 from threading import Lock
 
 from strands.hooks import HookProvider, HookRegistry
-from strands.hooks.events import BeforeInvocationEvent, BeforeToolCallEvent, AfterToolCallEvent
+from strands.hooks.events import BeforeInvocationEvent, AfterInvocationEvent, BeforeToolCallEvent, AfterToolCallEvent
 
 
 class OperationMode(Enum):
@@ -391,7 +391,7 @@ class OperationModeHook(HookProvider):
         """Register hook callbacks."""
         registry.add_callback(BeforeInvocationEvent, self.on_invocation_start)
         registry.add_callback(BeforeToolCallEvent, self.on_before_tool_call)
-        registry.add_callback(AfterToolCallEvent, self.on_after_tool_call)
+        registry.add_callback(AfterInvocationEvent, self.on_invocation_end)
 
     def on_invocation_start(self, event: BeforeInvocationEvent) -> None:
         """Called at the start of each agent invocation."""
@@ -468,9 +468,12 @@ class OperationModeHook(HookProvider):
                     f"Staying in {current_mode.name} mode. Operation cancelled."
                 )
 
-    def on_after_tool_call(self, event: AfterToolCallEvent) -> None:
-        """Revert mode after tool execution completes (if mode was elevated)."""
-        # After tool completes, revert to previous mode
+    def on_invocation_end(self, event: AfterInvocationEvent) -> None:
+        """Revert mode after the full agent invocation completes.
+
+        Mode persists for the entire agent turn so multiple tool calls
+        within the same invocation don't each trigger a new interrupt.
+        """
         self.mode_state.revert_mode()
 
 
